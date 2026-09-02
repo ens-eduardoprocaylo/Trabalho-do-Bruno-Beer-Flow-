@@ -6,6 +6,7 @@ from datetime import datetime
 
 DB_NAME = "beerflow.db"
 LIMITE_CRITICO_LITROS = 5.0
+LIMITE_LIMPEZA_LITROS = 1.5
 
 
 def conectar():
@@ -68,7 +69,22 @@ class BeerFlowApp:
         self.criar_interface()
         self.atualizar_tudo()
 
+    def validar_decimal(self, valor):
+        """Permite somente números e um separador decimal (vírgula ou ponto)."""
+        if valor == "":
+            return True
+        if any(c not in "0123456789,." for c in valor):
+            return False
+        return valor.count(",") + valor.count(".") <= 1
+
+    def validar_inteiro(self, valor):
+        """Permite somente números inteiros positivos durante a digitação."""
+        return valor == "" or valor.isdigit()
+
     def criar_interface(self):
+        self.vcmd_decimal = (self.root.register(self.validar_decimal), "%P")
+        self.vcmd_inteiro = (self.root.register(self.validar_inteiro), "%P")
+
         titulo = ttk.Label(
             self.root,
             text="BeerFlow",
@@ -126,7 +142,9 @@ class BeerFlowApp:
         self.nome_cerveja.grid(row=0, column=1, padx=8, pady=8)
 
         ttk.Label(form, text="Volume do barril (L):").grid(row=0, column=2, padx=8, pady=8, sticky="w")
-        self.volume_barril = ttk.Entry(form, width=15)
+        self.volume_barril = ttk.Entry(
+            form, width=15, validate="key", validatecommand=self.vcmd_decimal
+        )
         self.volume_barril.grid(row=0, column=3, padx=8, pady=8)
 
         ttk.Button(
@@ -174,11 +192,16 @@ class BeerFlowApp:
         self.combo_cerveja_existente.grid(row=0, column=1, padx=8, pady=8, sticky="w")
 
         ttk.Label(frame, text="Volume de cada barril (L):").grid(row=1, column=0, padx=8, pady=8, sticky="w")
-        self.volume_novos_barris = ttk.Entry(frame, width=18)
+        self.volume_novos_barris = ttk.Entry(
+            frame, width=18, validate="key", validatecommand=self.vcmd_decimal
+        )
         self.volume_novos_barris.grid(row=1, column=1, padx=8, pady=8, sticky="w")
 
         ttk.Label(frame, text="Quantidade de barris:").grid(row=2, column=0, padx=8, pady=8, sticky="w")
-        self.quantidade_novos_barris = ttk.Spinbox(frame, from_=1, to=999, width=8)
+        self.quantidade_novos_barris = ttk.Spinbox(
+            frame, from_=1, to=999, width=8, validate="key",
+            validatecommand=self.vcmd_inteiro
+        )
         self.quantidade_novos_barris.set("1")
         self.quantidade_novos_barris.grid(row=2, column=1, padx=8, pady=8, sticky="w")
 
@@ -208,16 +231,55 @@ class BeerFlowApp:
         ttk.Label(frame, text="Barril:").grid(row=0, column=0, padx=8, pady=8, sticky="w")
         self.combo_barril = ttk.Combobox(frame, state="readonly", width=45)
         self.combo_barril.grid(row=0, column=1, padx=8, pady=8)
+        self.combo_barril.bind("<<ComboboxSelected>>", self.atualizar_estado_botao_limpeza)
 
-        ttk.Label(frame, text="Quantidade vendida (ml):").grid(row=1, column=0, padx=8, pady=8, sticky="w")
-        self.quantidade_ml = ttk.Entry(frame, width=20)
-        self.quantidade_ml.grid(row=1, column=1, padx=8, pady=8, sticky="w")
+        ttk.Label(frame, text="Quantidade da venda:").grid(row=1, column=0, padx=8, pady=8, sticky="w")
+        self.combo_tamanho_copo = ttk.Combobox(
+            frame,
+            state="readonly",
+            width=25,
+            values=("300 ml", "400 ml", "500 ml", "1 L", "Quantidade específica (ml)")
+        )
+        self.combo_tamanho_copo.grid(row=1, column=1, padx=8, pady=8, sticky="w")
+        self.combo_tamanho_copo.current(0)
+        self.combo_tamanho_copo.bind("<<ComboboxSelected>>", self.atualizar_campo_ml_especifico)
+
+        ttk.Label(frame, text="mL específicos:").grid(row=2, column=0, padx=8, pady=8, sticky="w")
+        self.ml_especificos = ttk.Entry(
+            frame,
+            width=18,
+            validate="key",
+            validatecommand=self.vcmd_inteiro,
+            state="disabled"
+        )
+        self.ml_especificos.grid(row=2, column=1, padx=8, pady=8, sticky="w")
+        self.lbl_ml_especificos_info = ttk.Label(
+            frame,
+            text="Selecione 'Quantidade específica (ml)' para informar outro volume."
+        )
+        self.lbl_ml_especificos_info.grid(row=3, column=1, padx=8, pady=(0, 8), sticky="w")
+
+        botoes = ttk.Frame(frame)
+        botoes.grid(row=4, column=0, columnspan=2, padx=8, pady=12)
 
         ttk.Button(
-            frame,
+            botoes,
             text="Registrar venda",
             command=self.registrar_venda
-        ).grid(row=2, column=0, columnspan=2, padx=8, pady=12)
+        ).pack(side="left", padx=6)
+
+        self.btn_limpar_barril = ttk.Button(
+            botoes,
+            text="Limpar barril",
+            command=self.limpar_barril,
+            state="disabled"
+        )
+        self.btn_limpar_barril.pack(side="left", padx=6)
+
+        ttk.Label(
+            frame,
+            text="Limpar barril só é liberado com menos de 1,5 L e não registra venda nem consumo."
+        ).grid(row=5, column=0, columnspan=2, padx=8, pady=(0, 10), sticky="w")
 
         resultado = ttk.LabelFrame(self.aba_vendas, text="Resultado da automação")
         resultado.pack(fill="both", expand=True, padx=10, pady=10)
@@ -365,24 +427,46 @@ class BeerFlowApp:
             f"{quantidade} barril(is) de {nome} adicionado(s) com sucesso."
         )
 
+    def atualizar_campo_ml_especifico(self, event=None):
+        personalizado = self.combo_tamanho_copo.get() == "Quantidade específica (ml)"
+        self.ml_especificos.config(state="normal" if personalizado else "disabled")
+        if not personalizado:
+            self.ml_especificos.delete(0, tk.END)
+
     def registrar_venda(self):
         selecao = self.combo_barril.get()
-        qtd_txt = self.quantidade_ml.get().strip().replace(",", ".")
+        tamanho_copo = self.combo_tamanho_copo.get()
 
         if not selecao:
             messagebox.showwarning("Atenção", "Selecione um barril.")
             return
 
-        try:
-            quantidade_ml = float(qtd_txt)
-            if quantidade_ml <= 0:
-                raise ValueError
-        except ValueError:
-            messagebox.showwarning("Atenção", "Informe uma quantidade válida em ml.")
-            return
+        volumes_copo = {
+            "300 ml": 0.3,
+            "400 ml": 0.4,
+            "500 ml": 0.5,
+            "1 L": 1.0,
+        }
+
+        if tamanho_copo == "Quantidade específica (ml)":
+            ml_txt = self.ml_especificos.get().strip()
+            try:
+                quantidade_ml = int(ml_txt)
+                if quantidade_ml <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showwarning("Atenção", "Informe uma quantidade válida em mL.")
+                return
+            quantidade_litros = quantidade_ml / 1000.0
+            descricao_venda = f"{quantidade_ml} ml"
+        else:
+            quantidade_litros = volumes_copo.get(tamanho_copo)
+            if quantidade_litros is None:
+                messagebox.showwarning("Atenção", "Selecione a quantidade da venda.")
+                return
+            descricao_venda = tamanho_copo
 
         barril_id = int(selecao.split(" - ")[0])
-        quantidade_litros = quantidade_ml / 1000.0
 
         conn = conectar()
         cur = conn.cursor()
@@ -456,7 +540,7 @@ class BeerFlowApp:
         texto = (
             f"Venda registrada com sucesso!\n\n"
             f"Cerveja: {cerveja_nome}\n"
-            f"Quantidade vendida: {quantidade_ml:.0f} ml\n"
+            f"Volume vendido: {descricao_venda}\n"
             f"Volume restante: {novo_volume:.2f} L"
         )
 
@@ -465,8 +549,102 @@ class BeerFlowApp:
             messagebox.showwarning("Alerta BeerFlow", mensagem_alerta)
 
         self.lbl_resultado.config(text=texto)
-        self.quantidade_ml.delete(0, tk.END)
         self.atualizar_tudo()
+
+    def atualizar_estado_botao_limpeza(self, event=None):
+        selecao = self.combo_barril.get()
+        habilitar = False
+
+        if selecao:
+            try:
+                barril_id = int(selecao.split(" - ")[0])
+                conn = conectar()
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT volume_atual FROM barris WHERE id = ? AND ativo = 1",
+                    (barril_id,)
+                )
+                row = cur.fetchone()
+                conn.close()
+                if row:
+                    volume_atual = row[0]
+                    habilitar = 0.000001 < volume_atual < LIMITE_LIMPEZA_LITROS
+            except (ValueError, sqlite3.Error):
+                habilitar = False
+
+        self.btn_limpar_barril.config(state="normal" if habilitar else "disabled")
+
+    def limpar_barril(self):
+        selecao = self.combo_barril.get()
+
+        if not selecao:
+            messagebox.showwarning("Atenção", "Selecione um barril.")
+            return
+
+        barril_id = int(selecao.split(" - ")[0])
+
+        conn = conectar()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT b.volume_atual, c.nome
+            FROM barris b
+            JOIN cervejas c ON c.id = b.cerveja_id
+            WHERE b.id = ? AND b.ativo = 1
+            """,
+            (barril_id,)
+        )
+        row = cur.fetchone()
+
+        if not row:
+            conn.close()
+            messagebox.showerror("Erro", "Barril não encontrado ou já está vazio.")
+            return
+
+        volume_atual, cerveja_nome = row
+
+        if volume_atual <= 0.000001:
+            conn.close()
+            messagebox.showinfo("Barril vazio", "Este barril já está vazio.")
+            return
+
+        if volume_atual >= LIMITE_LIMPEZA_LITROS - 0.000001:
+            conn.close()
+            messagebox.showwarning(
+                "Limpeza não permitida",
+                f"O barril ainda possui {volume_atual:.2f} L. "
+                f"A limpeza só é permitida quando restarem menos de {LIMITE_LIMPEZA_LITROS:.1f} L."
+            )
+            return
+
+        confirmar = messagebox.askyesno(
+            "Limpar barril",
+            f"O barril #{barril_id} ({cerveja_nome}) possui {volume_atual:.2f} L.\n\n"
+            "Deseja zerar este volume? Esta operação NÃO será registrada como venda nem consumo."
+        )
+        if not confirmar:
+            conn.close()
+            return
+
+        # A limpeza altera apenas o saldo do barril. Não cria registro em vendas,
+        # portanto o volume descartado não entra no total vendido nem no consumo por cerveja.
+        cur.execute(
+            "UPDATE barris SET volume_atual = 0, ativo = 0 WHERE id = ?",
+            (barril_id,)
+        )
+        conn.commit()
+        conn.close()
+
+        self.lbl_resultado.config(
+            text=(
+                f"Barril limpo com sucesso!\n\n"
+                f"Barril: #{barril_id} - {cerveja_nome}\n"
+                f"Volume zerado: {volume_atual:.2f} L\n"
+                "Registro de venda/consumo: NÃO"
+            )
+        )
+        self.atualizar_tudo()
+        messagebox.showinfo("Sucesso", "Barril zerado sem registrar venda ou consumo.")
 
     def atualizar_tudo(self):
         self.atualizar_barris()
@@ -547,6 +725,14 @@ class BeerFlowApp:
             self.combo_cerveja_existente.set("")
 
     def atualizar_combo_barris(self):
+        selecao_anterior = self.combo_barril.get()
+        id_anterior = None
+        if selecao_anterior:
+            try:
+                id_anterior = int(selecao_anterior.split(" - ")[0])
+            except ValueError:
+                id_anterior = None
+
         conn = conectar()
         cur = conn.cursor()
 
@@ -565,12 +751,20 @@ class BeerFlowApp:
 
         self.combo_barril["values"] = valores
 
-        if valores:
+        valor_preservado = next(
+            (valor for valor in valores if id_anterior is not None and valor.startswith(f"{id_anterior} - ")),
+            None
+        )
+
+        if valor_preservado:
+            self.combo_barril.set(valor_preservado)
+        elif valores:
             self.combo_barril.current(0)
         else:
             self.combo_barril.set("")
 
         conn.close()
+        self.atualizar_estado_botao_limpeza()
 
     def atualizar_alertas(self):
         for item in self.tabela_alertas.get_children():

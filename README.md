@@ -85,3 +85,8 @@ A versão atual também permite:
 - **Cheio:** o volume atual é igual ao volume total do barril;
 - **Parcialmente vendido:** já houve retirada de volume, mas ainda há cerveja disponível;
 - **Vazio:** o volume chegou a zero.
+
+## Atualização de entrada e vendas
+- Campos de volume aceitam apenas números e um separador decimal (vírgula ou ponto).
+- Quantidade de barris aceita apenas números inteiros.
+- O registro de venda usa tamanhos fixos: 300 ml, 400 ml, 500 ml ou 1 L.
